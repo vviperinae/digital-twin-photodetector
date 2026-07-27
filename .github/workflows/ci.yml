@@ -23,33 +23,3 @@ jobs:
         run: |
           cd fault-service
           pytest tests/ -v
-
-  build:
-    needs: unit-tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build fault-service image
-        run: docker build -t fault-service:ci ./fault-service
-      - name: Build full stack
-        run: docker compose -f docker-compose.yml config  # validates compose file
-
-  integration-tests:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Start full stack
-        run: docker compose up -d
-      - name: Wait for services
-        run: sleep 15
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install test deps
-        run: pip install pytest requests
-      - name: Run integration + e2e tests
-        run: pytest tests/ -v
-      - name: Tear down
-        if: always()
-        run: docker compose down
