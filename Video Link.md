@@ -11,4 +11,7 @@ https://youtu.be/OKKoZk9jGsA
 https://youtu.be/XS3jsI_3L4Y
 
 
+**Docker Compose Stack Deployment**
+https://youtu.be/Qra-F9AnCdM
+
 
