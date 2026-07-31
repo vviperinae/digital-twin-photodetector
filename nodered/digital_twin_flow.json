@@ -1,0 +1,245 @@
+[
+    {
+        "id": "tab1",
+        "type": "tab",
+        "label": "Digital Twin Pipeline",
+        "disabled": false,
+        "info": "Fake sensor -> MQTT -> InfluxDB, with digital twin logic (predicted = k*L, error, status) computed in the publisher function node."
+    },
+    {
+        "id": "fn1",
+        "type": "function",
+        "z": "tab1",
+        "name": " twin logic",
+        "func": "const K = 0.0063; // I = k * L\nconst data = JSON.parse(msg.payload);\nconst lux = data.lux; // REAL — from BH1750 via serial\n\n// --- Predicted current from your physics model, using real lux ---\nconst predictedCurrent = K * lux;\n\n// --- Simulated ground truth (measured current), until a real\n//     photodetector + op-amp is added ---\nconst noise = (Math.random() - 0.5) * 0.1;\nconst measuredCurrent = Math.max(0, predictedCurrent + noise);\nconst error = measuredCurrent - predictedCurrent;\nconst status = Math.abs(error) >= 1.0 ? \"FAULT\" : \"OK\";\n\n// --- Simulated V_out, following the same relationship you used\n//     for the fake sensor, until BPW34 + TL071 hardware exists ---\nconst vOut = Math.min(Math.max(predictedCurrent * 0.5 + noise * 0.5, 0), 3.3);\n\n// --- Simulated ambient temperature, until a DHT22 is wired in ---\nconst temp = Math.round((27 + (Math.random() - 0.5) * 3) * 10) / 10;\n\nmsg.payload = JSON.stringify({\n    sensor_id: data.sensor_id,\n    lux: lux,                         // real\n    v_out: Math.round(vOut * 1000) / 1000,     // simulated\n    temp: temp,                                 // simulated\n    predicted_current: Math.round(predictedCurrent * 1000) / 1000,\n    measured_current: Math.round(measuredCurrent * 1000) / 1000, // simulated\n    error: Math.round(error * 1000) / 1000,\n    status: status,\n    timestamp: data.timestamp,\n    // optional but useful for your report/demo — makes it easy to prove\n    // which fields are real vs. simulated when you're writing things up\n    data_source: {\n        lux: \"real_bh1750\",\n        v_out: \"simulated\",\n        temp: \"simulated\",\n        measured_current: \"simulated\"\n    }\n});\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 100,
+        "wires": [
+            [
+                "mqttout1",
+                "dbg1"
+            ]
+        ]
+    },
+    {
+        "id": "dbg1",
+        "type": "debug",
+        "z": "tab1",
+        "name": "Publisher debug",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 900,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "mqttout1",
+        "type": "mqtt out",
+        "z": "tab1",
+        "name": "Publish reading",
+        "topic": "photodetector/team7/reading",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "mqttbroker1",
+        "x": 880,
+        "y": 140,
+        "wires": []
+    },
+    {
+        "id": "mqttin1",
+        "type": "mqtt in",
+        "z": "tab1",
+        "name": "Subscribe reading",
+        "topic": "photodetector/team7/reading",
+        "qos": "0",
+        "datatype": "utf8",
+        "broker": "mqttbroker1",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 150,
+        "y": 280,
+        "wires": [
+            [
+                "fn2"
+            ]
+        ]
+    },
+    {
+        "id": "fn2",
+        "type": "function",
+        "z": "tab1",
+        "name": "Validate + shape for InfluxDB",
+        "func": "let data;\ntry {\n    data = JSON.parse(msg.payload);\n} catch (e) {\n    node.warn(\"Rejected malformed payload: \" + msg.payload);\n    return null;\n}\n\nconst required = [\"sensor_id\", \"lux\", \"v_out\", \"temp\", \"timestamp\"];\nfor (const f of required) {\n    if (!(f in data)) {\n        node.warn(\"Rejected payload missing field: \" + f);\n        return null;\n    }\n}\n\nmsg.tags = { sensor_id: data.sensor_id };\nmsg.payload = {\n    lux: data.lux,\n    v_out: data.v_out,\n    temp: data.temp,\n    predicted_current: data.predicted_current,\n    measured_current: data.measured_current,\n    error: data.error,\n    status: data.status   // <-- was missing, added here\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 500,
+        "y": 280,
+        "wires": [
+            [
+                "influxout1",
+                "dbg2"
+            ]
+        ]
+    },
+    {
+        "id": "dbg2",
+        "type": "debug",
+        "z": "tab1",
+        "name": "Subscriber debug",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 930,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "influxout1",
+        "type": "influxdb out",
+        "z": "tab1",
+        "influxdb": "e825c2f4fdf25f26",
+        "name": "Write to InfluxDB",
+        "measurement": "photodetector_reading",
+        "precision": "",
+        "retentionPolicy": "",
+        "database": "digital_twin",
+        "retentionPolicyV18Flux": "",
+        "org": "team7",
+        "bucket": "digital_twin",
+        "x": 930,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "7c842a04848eaf34",
+        "type": "serial in",
+        "z": "tab1",
+        "name": "serial",
+        "serial": "a9c6a191094c7c4e",
+        "x": 70,
+        "y": 100,
+        "wires": [
+            [
+                "d05b3f7f0ead2049"
+            ]
+        ]
+    },
+    {
+        "id": "d05b3f7f0ead2049",
+        "type": "function",
+        "z": "tab1",
+        "name": "lux",
+        "func": "const raw = msg.payload.toString().trim();\nconst match = raw.match(/Lux:\\s*([\\d.]+)/);\nif (!match) {\n    return null; // not a lux line — ignore boot/status messages\n}\n\nmsg.payload = JSON.stringify({\n    sensor_id: \"team7-real-01\",\n    lux: parseFloat(match[1]),\n    timestamp: new Date().toISOString()\n});\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 250,
+        "y": 100,
+        "wires": [
+            [
+                "fn1"
+            ]
+        ]
+    },
+    {
+        "id": "mqttbroker1",
+        "type": "mqtt-broker",
+        "name": "Public Test Broker",
+        "broker": "test.mosquitto.org",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "e825c2f4fdf25f26",
+        "type": "influxdb",
+        "hostname": "127.0.0.1",
+        "port": 8086,
+        "protocol": "http",
+        "database": "database",
+        "name": "photodetector/team7/reading",
+        "usetls": false,
+        "tls": "",
+        "influxdbVersion": "2.0",
+        "url": "http://127.0.0.1:8086",
+        "timeout": 10,
+        "rejectUnauthorized": true
+    },
+    {
+        "id": "a9c6a191094c7c4e",
+        "type": "serial-port",
+        "name": "serial",
+        "serialport": "COM14",
+        "serialbaud": "9600",
+        "databits": 8,
+        "parity": "none",
+        "stopbits": 1,
+        "waitfor": "",
+        "dtr": "none",
+        "rts": "none",
+        "cts": "none",
+        "dsr": "none",
+        "newline": "\\n",
+        "bin": "false",
+        "out": "char",
+        "addchar": "\\n",
+        "responsetimeout": 10000
+    },
+    {
+        "id": "5aad4a3a32b4787a",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-influxdb": "0.7.0",
+            "node-red-node-serialport": "2.0.3"
+        }
+    }
+]
