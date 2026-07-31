@@ -1,16 +1,18 @@
 # Digital Twin Data Pipeline, Setup Guide (Node-RED + InfluxDB + Grafana + Blender)
 
-This guide sets up the full pipeline: **sensor (real + simulated) → MQTT → InfluxDB → Grafana**, plus a 3D visualization layer in Blender, running the core stack in Docker.
+This guide sets up the full pipeline: **BH1750 sensor (via STM32) → MQTT → InfluxDB → Grafana**, plus a 3D visualization layer in Blender. InfluxDB and Grafana run in Docker; Node-RED runs as a native install.
 
-**Note on visualization tooling:** this project uses **Blender** for 3D digital twin visualization instead of NVIDIA Omniverse. Omniverse was considered, but Blender was chosen for its lower hardware requirements, free/open-source licensing, and Python scripting support (via `bpy`), which made it straightforward to sync live sensor data into the 3D scene.
+**Note on visualization tooling:** this project uses **Blender** for 3D digital twin visualization instead of NVIDIA Omniverse, chosen for its lower hardware requirements, free/open-source licensing, and Python scripting support (via `bpy`), which made it straightforward to sync live sensor data into the 3D scene.
 
 ## 1. Prerequisites
 
-- **Docker Desktop** installed
-- **Blender** installed (used instead of NVIDIA Omniverse for 3D visualization)
-- If you're on **Windows**: use **WSL2** as your terminal, and in Docker Desktop go to Settings → Resources → WSL Integration and enable it for your distro (e.g. Ubuntu). This lets `docker` commands run directly from your WSL terminal.
+- **Docker Desktop** installed (for InfluxDB + Grafana)
+- **Node-RED** installed natively (not run inside Docker)
+- **Blender** installed
+- **STM32 Nucleo F411RE** with BH1750 sensor wired up, mbed toolchain for firmware
+- If you're on **Windows**: use **WSL2** as your terminal for the Docker commands, and in Docker Desktop go to Settings → Resources → WSL Integration and enable it for your distro (e.g. Ubuntu)
 
-## 2. Get the stack running
+## 2. Get the data stack running
 
 1. Create a folder for the project stack:
 
@@ -18,44 +20,51 @@ This guide sets up the full pipeline: **sensor (real + simulated) → MQTT → I
         cd ~/digital-twin-stack
 
 2. Copy `docker-compose.yml` (from this repo) into this folder.
-3. Bring everything up:
+3. Bring up InfluxDB and Grafana:
 
         docker compose up -d
 
-4. Confirm all three services are running:
+4. Confirm both services are running:
 
         docker compose ps
 
-   You should see `node-red`, `influxdb2`, and `grafana` all listed as **Up**.
+   You should see `influxdb2` and `grafana` listed as **Up**. (Node-RED is not part of this compose file, it's started separately in Section 3.)
 
 ### What's running and where
 
 | Service | URL | Purpose |
 |---|---|---|
-| Node-RED | http://localhost:1880 | Generates/reads sensor data, runs digital twin logic, publishes/subscribes MQTT |
-| InfluxDB | http://localhost:8086 | Stores time-series sensor + twin data |
-| Grafana | http://localhost:3000 | Visualizes the data on dashboards |
+| Node-RED (native) | http://localhost:1880 | Reads sensor data over serial, runs digital twin logic, publishes/subscribes MQTT |
+| InfluxDB (Docker) | http://localhost:8086 | Stores time-series sensor + twin data |
+| Grafana (Docker) | http://localhost:3000 | Visualizes the data on dashboards |
 
-**Important:** Node-RED, InfluxDB, and Grafana are each in their own container. Inside Node-RED or Grafana, `localhost` refers to that container itself, not the other services. To reach InfluxDB from either of them, always use `http://influxdb:8086`, since `influxdb` is the container's service name and Docker resolves it automatically as all three are on the same network (`dt-net`).
+**Important:** InfluxDB and Grafana are each in their own Docker container. Inside Grafana, `localhost` refers to the Grafana container itself, not InfluxDB. To reach InfluxDB from Grafana, always use `http://influxdb:8086`, since `influxdb` is the container's service name and Docker resolves it automatically as both are on the same network (`dt-net`). Node-RED, running natively on your host machine (not in Docker), reaches InfluxDB via `http://localhost:8086` instead, since from the host's perspective, InfluxDB's port is published to `localhost`.
 
-## 3. Set up Node-RED
+## 3. Set up Node-RED (native install)
 
-### 3.1 Install the InfluxDB palette node
+### 3.1 Install Node-RED and the InfluxDB palette node
 
-Node-RED doesn't include InfluxDB support by default.
+If Node-RED isn't installed yet:
+
+    npm install -g --unsafe-perm node-red
+
+Then start it:
+
+    node-red
+
+Node-RED doesn't include InfluxDB or serial-port support by default.
 
 1. Open http://localhost:1880
 2. Hamburger menu (top right) → Manage palette → Install tab
 3. Search `node-red-contrib-influxdb` → Install
-
-If reading serial sensor data (BH1750), also install `node-red-node-serialport`.
+4. Search `node-red-node-serialport` → Install
 
 ### 3.2 Import the flow
 
 1. Hamburger menu → Import
 2. Upload or paste `nodered/digital_twin_flow.json` (from this repo)
 3. Click Import, this creates a "Digital Twin Pipeline" tab with everything wired up:
-   - **Serial in:** reads real `lux` readings from a BH1750 sensor over serial
+   - **Serial in:** reads real `lux` readings from the BH1750 sensor via the STM32 Nucleo F411RE, over serial
    - **Publisher side:** twin logic function node computes `predicted_current = K * lux`, simulates `measured_current`, `v_out`, `temp` until further hardware exists, computes `error`, flags `status` as `OK`/`FAULT`, publishes as JSON over MQTT
    - **Subscriber side:** subscribes to the same MQTT topic, validates the payload, writes it into InfluxDB
 
@@ -74,13 +83,13 @@ Double-click the **Public Test Broker** config node and confirm exactly:
 
 If `test.mosquitto.org` is ever slow/unreachable, `broker.hivemq.com` (same port, no auth) is a reliable fallback, just swap the Server field.
 
-### 3.4 Configure the serial-in node (for real BH1750 sensor)
+### 3.4 Configure the serial-in node (STM32 + BH1750)
 
 Double-click the **serial** node and its linked config node, and set:
 
 | Field | Value |
 |---|---|
-| Serial Port | Your Arduino/BH1750's COM port (e.g. COM14 on Windows) |
+| Serial Port | Your STM32 Nucleo F411RE's COM port (e.g. COM14 on Windows) |
 | Baud Rate | 9600 |
 | Data bits | 8 |
 | Parity | none |
@@ -93,7 +102,7 @@ Double-click the **Write to InfluxDB** node, and its linked config node, and set
 
 | Field | Value |
 |---|---|
-| URL | `http://influxdb:8086` (not `localhost`) |
+| URL | `http://localhost:8086` (Node-RED runs natively on the host, so it reaches InfluxDB's published port via `localhost`, not the Docker service name) |
 | Version | 2.0 |
 | Organization | `team7` |
 | Bucket | `digital_twin` |
@@ -122,7 +131,7 @@ If this container ever gets removed/recreated, you'll need to repeat this token 
 2. Left sidebar → Connections → Data sources → Add data source → InfluxDB
 3. Fill in:
    - **Query Language:** Flux (not InfluxQL, InfluxDB 2.x tokens work differently under InfluxQL)
-   - **URL:** `http://influxdb:8086`
+   - **URL:** `http://influxdb:8086` (Grafana runs in the same Docker network as InfluxDB, so it uses the service name)
    - **Organization:** `team7`
    - **Token:** paste the same token from Section 4
    - **Default Bucket:** `digital_twin`
@@ -172,58 +181,61 @@ This project uses **Blender** (instead of NVIDIA Omniverse) for the 3D digital t
 1. Open Blender
 2. File → Open → select `blender/Photodetector.blend` (from this repo)
 3. This loads the 3D model of the photodetector setup (includes the `BH1750.stl` sensor model)
+4. In the Outliner panel (top-right), check the exact name of the light object you want to drive (e.g. "Light", "Point", "Sun"), you'll need this in Section 6.3
 
-### 6.2 Install the MQTT client library for Blender's Python
+### 6.2 Install the MQTT client library
 
-Blender ships its own bundled Python, separate from your system Python, so `paho-mqtt` needs to be installed into Blender's Python specifically:
+The sync script imports `paho-mqtt`. Blender's bundled Python doesn't see packages installed via a regular system `pip install`, so the script itself works around this by manually appending your system Python's user site-packages folder to `sys.path` before importing.
 
-1. Find Blender's bundled Python path (varies by OS/version), e.g. on Windows:
+Install `paho-mqtt` using your regular system Python (not Blender's):
 
-        "C:\Program Files\Blender Foundation\Blender <version>\<version>\python\bin\python.exe" -m pip install paho-mqtt
+    pip install paho-mqtt
 
-2. On macOS/Linux, locate the equivalent path under Blender's installation directory.
+This should be enough, since the script handles locating it. If it still can't find the module, double check the `_user_site` path near the top of `mqtt_lux_sync_blender.py` matches where pip actually installed it on your system.
 
 ### 6.3 Run the sync script
 
 1. In Blender, switch to the **Scripting** tab (top menu)
 2. Open `blender/mqtt_lux_sync_blender.py` (from this repo) in the text editor panel
-3. Confirm the script's broker/topic settings match your pipeline:
-   - Broker: `test.mosquitto.org`
-   - Port: `1883`
-   - Topic: `photodetector/team7/reading`
+3. Confirm the script's settings match your setup:
+   - `LIGHT_OBJECT_NAME`, must exactly match the light object name you noted in Section 6.1
+   - `LIGHT_ENERGY_SCALE`, tune until brightness changes are clearly visible
 4. Click **Run Script** (▶ button)
-5. The script subscribes to the same MQTT topic as Node-RED and updates the 3D scene (e.g. object color/state) live as new `lux`/`status` readings arrive
+5. The script starts a background MQTT thread and registers a Blender timer (`bpy.app.timers`) that checks for new lux readings every 0.2 seconds, updating the named light object's energy live as readings arrive
+
+**Note:** this script must be run from inside Blender (it imports `bpy`), not as a standalone terminal command. Blender's console (Window → Toggle System Console on Windows) will show `[BlenderLuxSync]` log lines confirming MQTT connection and each light update.
 
 ### 6.4 Demonstrating it live
 
-With the full stack running (Section 2), the BH1750 sensor connected (Section 3.4), and this script running, changing the light level on the real sensor should visibly update:
+With InfluxDB/Grafana running (Section 2), Node-RED running and deployed (Section 3), the STM32 + BH1750 connected, and this script running in Blender, changing the light level on the real sensor should visibly update:
 - The Grafana dashboard (Section 5.3)
-- The Blender 3D scene (this section)
+- The Blender 3D scene's light object (this section)
 - The `status` field (`OK`/`FAULT`) in InfluxDB
 
-This live three-way sync (real sensor → dashboard → 3D visualization) is the core demo shown in the [video recordings](https://github.com/vviperinae/digital-twin-photodetector/blob/main/Video%20Link.md).
+This live three-way sync (real sensor → dashboard → 3D visualization) is the core demo shown in the [video recordings](./Video_Link.md).
 
 ## 7. Everyday commands
 
-    docker compose up -d               # start everything
-    docker compose stop                # stop everything, keep data
+    docker compose up -d               # start InfluxDB + Grafana
+    docker compose stop                # stop, keep data
     docker compose down                # stop + remove containers (volumes/data still kept)
     docker compose ps                  # check what's running
-    docker compose logs -f node-red    # watch Node-RED's logs (useful for connection issues)
+    docker compose logs -f grafana     # watch Grafana's logs
 
 ## 8. Troubleshooting quick reference
 
 | Symptom | Likely cause |
 |---|---|
 | MQTT node stuck on "connecting" | Broker Server field has `https://` or wrong hostname |
-| `ECONNREFUSED 127.0.0.1:8086` in Node-RED | InfluxDB URL set to `localhost` instead of `influxdb` |
+| `ECONNREFUSED` connecting to InfluxDB from Node-RED | Node-RED (native) should use `http://localhost:8086`, not `http://influxdb:8086`, since it's outside the Docker network |
 | InfluxDB Data Explorer shows only one weird `measurement` field | `Write to InfluxDB` node expects a flat field object |
 | Grafana: "unauthorized: unauthorized access error reading buckets" | Bad/incomplete token, wrong org, or InfluxQL instead of Flux |
 | `docker compose up -d` fails with "port already allocated" | An old standalone container (before you had compose) is already using that port |
-| Blender script errors on `import paho.mqtt.client` | `paho-mqtt` not installed into Blender's bundled Python (see Section 6.2) |
+| Blender script errors on `import bpy` when run outside Blender | This script only runs inside Blender's Scripting tab, it cannot run as a plain terminal `python` command |
+| Blender script can't find `paho-mqtt` | Confirm the `_user_site` path in the script matches where your system `pip` actually installed it |
 
 ## 9. Sharing this with the team
 
-- `docker-compose.yml`, `nodered/digital_twin_flow.json`, and `blender/` should all live in the repo, anyone can `git pull`, run `docker compose up -d`, and import the same flow/scene.
+- `docker-compose.yml`, `nodered/digital_twin_flow.json`, and `blender/` should all live in the repo, anyone can `git pull`, run `docker compose up -d` for InfluxDB/Grafana, start Node-RED natively, and import the same flow/scene.
 - The InfluxDB token and Grafana login are **not** stored in these files (by design, they're credentials), each person generates/enters their own after setup.
 - If you improve the flow (e.g. add a new panel or fix a node), re-export it from Node-RED and commit the updated `digital_twin_flow.json` so the team stays in sync. Same applies to the Blender scene, save and re-commit `Photodetector.blend` after changes.
