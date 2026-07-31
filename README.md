@@ -1,85 +1,93 @@
-# digital-twin-photodetector
+# Digital Twin Photodetector Project
 
-## Data Provenance
+A digital twin system for a photodetector (LDR/light sensor), simulating and monitoring real sensor behaviour through a live data pipeline: **sensor → MQTT → InfluxDB → Grafana**, with an AI-based fault detection layer and 3D visualization.
 
-| Field | Source |
+## Quick Links
+- [Sprint Log](./SPRINT_LOG.md) - sprint planning, task ownership, deliverables
+- [Setup Guide](./STEPS.md) - full stack setup instructions
+- [Video Demos](./Video_Link.md) - recordings of the working system
+
+## Team
+
+| Name | Student ID |
 |---|---|
-| `lux` | Real — BH1750 via STM32 |
-| `v_out`, `temp`, `measured_current` | Simulated (no BPW34/TL071/DHT22 hardware yet) |
-| `predicted_current`, `error`, `status` | Calculated from the values above |
+| Safa Sarfraz | 24001006 |
+| Puteri Banafsha Binti Azmi | 22010863 |
+| Aisyah Sofea Binti Mohd Sallehuddin | 22011342 |
+| Dania Anessa Binti Mohd Aswawi | 22011086 |
+| Sobena A/P Ramachanthirarao | 22010905 |
 
+## Project Overview
 
-## Repo Structure
+The digital twin models a photodetector using:
 
-| Folder / File | Contents |
-|---|---|
-| `blender/` | `mqtt_lux_sync_blender.py` — sync the 3D scene's light live from MQTT readings |
-| `fault-service/` | Fault classifier microservice + its unit tests |
-| `grafana/` | Dashboard JSON provisioning (4 panels: Real-time Current, Model Error gauge, Illuminance & Voltage Trend, System Status) |
-| `influxdb/` | InfluxDB config / init |
-| `nodered/` | Node-RED flow: serial parsing, twin model logic, MQTT publish, InfluxDB write validation |
-| `notebooks/` | `Digital_Twin_AI_Behavioral_Model.ipynb` (fault classifier training + streaming demo), `Digital_Twin_Streaming_Aggregation.ipynb` (live MQTT capture + windowed aggregation) |
-| `tests/` | Unit, integration, and system tests |
-| `docker-compose.yml` | Brings up InfluxDB + Grafana |
-| `SPRINT_LOG.md` | Sprint-by-sprint progress log |
-| `VIDEO_LINK.md` | Link to the demo walkthrough video |
+    predicted_current = K * lux
+
+`lux` is captured from a real BH1750 sensor connected via an STM32 Nucleo F411RE (mbed toolchain), over serial. This predicted value is compared against a measured current (simulated pending additional hardware) to compute an error signal. If the error exceeds a threshold, the system flags a `FAULT` status, otherwise `OK`.
+
+## Architecture
+
+    BH1750 Sensor (STM32 Nucleo F411RE, real) → Node-RED (native install, serial in) → Twin Logic → MQTT (test.mosquitto.org)
+                                                                      ↓
+                                                        Node-RED (subscriber) → InfluxDB (Docker) → Grafana (Docker)
+                                                                      ↓
+                                                        Fault Classifier (Flask + Random Forest)
+
+## Service Contracts
+
+| From → To | Protocol | Port | Route/Topic | Format |
+|---|---|---|---|---|
+| BH1750 (STM32, serial) → Node-RED | Serial | COM14, 9600 baud | - | Plain text (`Lux: <value>`) |
+| Node-RED → MQTT Broker | MQTT | 1883 | `photodetector/team7/reading` | JSON |
+| MQTT Broker → Node-RED (subscriber) | MQTT | 1883 | `photodetector/team7/reading` | JSON |
+| Node-RED → InfluxDB | HTTP | 8086 | `/api/v2/write?org=team7&bucket=digital_twin` | Line Protocol |
+| Node-RED → Fault Service | HTTP POST | 5001 | `/predict` | JSON |
+| Grafana → InfluxDB | HTTP (Flux) | 8086 | `/api/v2/query` | Flux/JSON |
+
+## Repository Structure
+
+    digital-twin-photodetector/
+    ├── .github/workflows/       # CI/CD pipeline
+    ├── blender/                 # 3D visualization (model + sync script, run inside Blender)
+    ├── fault-service/           # Flask microservice + Random Forest fault classifier
+    │   └── tests/                # Unit tests
+    ├── grafana/                 # Dashboard export
+    ├── influxdb/                 # Data export
+    ├── nodered/                  # Node-RED flow export + docs
+    ├── notebooks/                 # AI model + streaming/aggregation notebooks
+    ├── tests/                     # Integration and end-to-end tests
+    ├── docker-compose.yml        # Brings up InfluxDB + Grafana
+    ├── SPRINT_LOG.md              # Sprint planning and execution log
+    ├── STEPS.md                    # Full setup guide
+    └── Video_Link.md                # Demo videos
 
 ## Setup
 
-### Prerequisites
-- Docker + Docker Compose
-- Node-RED (native install)
-- Python 3.x with `paho-mqtt` (for the Blender sync script)
-- Blender (for live 3D visualization)
-- STM32 Nucleo F411RE + BH1750, mbed toolchain (for firmware)
+See [STEPS.md](./STEPS.md) for full setup instructions.
 
-### 1. Bring up the data stack
-```bash
-docker compose up -d
-docker compose ps   # confirm InfluxDB + Grafana are running
-```
+Quick start:
 
-### 2. Node-RED
-Import the flow from `nodered/`, deploy. It reads from the STM32 over serial (COM14 @ 9600 baud), runs the twin model, and publishes to `photodetector/team7/reading` on `test.mosquitto.org`.
+    docker compose up -d
+    docker compose ps   # confirm influxdb2 and grafana are Up
+    # Node-RED runs as a native install, started separately (see STEPS.md)
 
-### 3. Blender live sync
-```bash
-python blender/mqtt_lux_sync_blender.py
-```
+## Rubric Evidence Map
 
-### 4. Grafana
-Open `localhost:3000` — dashboards are pre-provisioned from `grafana/`.
+| Category | Evidence |
+|---|---|
+| **Visualization** | `blender/`, `grafana/grafana.json`, demo videos in [Video_Link.md](./Video_Link.md) |
+| **AI/Behavioral Model** | `notebooks/ai_behavioral_model.ipynb`, `fault-service/` (Random Forest classifier + physics model in Node-RED twin logic) |
+| **Data, Streaming, Aggregation** | `nodered/` (real BH1750/STM32 sensor stream via serial), `notebooks/streaming_aggregation.ipynb`, `influxdb/` |
+| **Development Practices** | [SPRINT_LOG.md](./SPRINT_LOG.md), `.github/workflows/ci.yml`, pull request history |
+| **Deployment** | `docker-compose.yml`, Service Contracts table above, demo video in [Video_Link.md](./Video_Link.md) |
 
-### 5. Fault classifier service
-See `fault-service/` for setup — runs alongside the pipeline and reacts to streamed readings.
+## Development Practices
 
-## Notebooks
-Run these live against the pipeline, not just as static code:
-- `notebooks/Digital_Twin_Streaming_Aggregation.ipynb` — captures live MQTT data, shows windowed aggregation vs. raw
-- `notebooks/Digital_Twin_AI_Behavioral_Model.ipynb` — trained classifier, demonstrated against a streamed sequence with explicit actions
-
-## Testing
-```bash
-pytest tests/
-```
-Covers unit tests (sensor parsing, twin logic, InfluxDB write validation), integration tests (fake MQTT message → InfluxDB, malformed payload rejection), and at least one full-pipeline system test. CI (`.github/workflows/`) runs this automatically on every push.
-
-## Branching / Contributing
-Strict workflow: `branch → commit → push → PR → review → merge`. No direct pushes to `main`.
-```bash
-git checkout main && git pull origin main
-git checkout -b feature/<short-description>
-# ...commit, push...
-git push origin feature/<short-description>
-# open PR on GitHub, assign a reviewer, get approval, merge
-```
+This project follows a sprint-based, PR-reviewed Git workflow. See:
+- [SPRINT_LOG.md](./SPRINT_LOG.md) for sprint goals, task ownership, and deliverables per member
+- [.github/workflows/ci.yml](./.github/workflows/ci.yml) for the CI/CD pipeline (automatic tests on every push/PR)
+- Pull request history for individual contributions and peer review
 
 ## Demo
-See [`VIDEO_LINK.md`](VIDEO_LINK.md) for the full walkthrough — hardware, live Node-RED, Grafana + Blender reacting together, container persistence, and notebook outputs.
 
-## Team — Group 7
-- vviperinae — Docker/CI infrastructure, integration & e2e tests, PR reviews
-- kuaav — Blender visualization, Grafana dashboards, InfluxDB export, twin model logic
-- [Teammate B] — Fault classifier microservice
-- [Teammate C] — Node-RED flow, InfluxDB integration, live fault demo
-- Sobana — Documentation (README, sprint log)
+See [Video_Link.md](./Video_Link.md) for walkthrough demos of the working system.
