@@ -8,7 +8,7 @@ https://youtu.be/OKKoZk9jGsA
 
 **Screen Recording Grafana and Model**
 
-https://youtu.be/XS3jsI\_3L4Y
+https://youtu.be/XS3jsI_3L4Y
 
 
 
